@@ -1,0 +1,113 @@
+---
+title: "LBB - Data Viz"
+author: "Yevonnael Andrew"
+date: "2/5/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(plotly)
+library(ggpubr)
+library(scales)
+```
+
+```{r, message=FALSE, warning=FALSE}
+dataHR <- read_csv(file = 'WA_Fn-UseC_-HR-Employee-Attrition.csv')
+```
+
+```{r}
+glimpse(dataHR)
+```
+
+```{r}
+sum(is.na(dataHR))
+```
+
+**Distribusi dari Attrition**
+
+```{r}
+dist_attr <- dataHR %>%
+                group_by(Attrition) %>%
+                summarise(Jumlah = n())
+print(dist_attr)
+```
+
+```{r}
+dist_attr %>% 
+  ggplot(aes(x=Attrition, y=Jumlah)) +
+  geom_col()
+```
+
+```{r}
+mean_age <- dataHR %>%
+    group_by(Gender) %>%
+    summarise(mean = mean(Age),
+              median = median(Age))
+
+print(mean_age)
+```
+
+
+```{r}
+plot1 <- dataHR %>% 
+    ggplot(aes(x=Age)) + 
+    geom_density(fill = "green", alpha = 0.5) +
+    geom_vline(aes(xintercept = mean(Age)))
+
+plot2 <- dataHR %>%
+    filter(Gender == "Male") %>%
+    ggplot(aes(x=Age)) + 
+    geom_density(fill = "blue", alpha = 0.5) +
+    geom_vline(aes(xintercept = mean(Age)))
+
+plot3 <- dataHR %>%
+    filter(Gender == "Female") %>%
+    ggplot(aes(x=Age)) + 
+    geom_density(fill = "red", alpha = 0.5) +
+    geom_vline(aes(xintercept = mean(Age)))
+
+ggarrange(plot1,
+          ggarrange(plot2, plot3),
+          nrow = 2)
+```
+
+```{r}
+dist_attr_gender <- dataHR %>%
+                group_by(Attrition, Gender) %>%
+                summarise(Jumlah = n())
+print(dist_attr_gender)
+```
+
+```{r}
+dist_attr_gender %>%
+  ggplot(aes(x=Attrition, y=Jumlah, fill=Gender)) +
+  geom_col(position="dodge")
+```
+
+```{r}
+pie_attr_male <- dist_attr_gender %>%
+                    filter(Gender == "Male") %>%
+                    ggplot(aes(x="", y=Jumlah, fill=Attrition)) +
+                    geom_bar(width=1, stat="identity") + 
+                    coord_polar("y", start=0) +
+                    ggtitle("Pie Chart \nAttrition pada Laki-laki") +
+                    geom_text(aes(y = Jumlah/2 + c(5, 10), 
+                              label = percent(Jumlah/sum(Jumlah))), size=5)
+
+pie_attr_female <- dist_attr_gender %>%
+                    filter(Gender == "Female") %>%
+                    ggplot(aes(x="", y=Jumlah, fill=Attrition)) +
+                    geom_bar(width=1, stat="identity") + 
+                    coord_polar("y", start=0) +
+                    ggtitle("Pie Chart \nAttrition pada Perempuan") +
+                    geom_text(aes(y = Jumlah/2 + c(5, 10), 
+                              label = percent(Jumlah/sum(Jumlah))), size=5)
+
+ggarrange(pie_attr_male, pie_attr_female)
+```
+
