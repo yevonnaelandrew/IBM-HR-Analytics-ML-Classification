@@ -6,6 +6,7 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
+rm(list = ls())
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
@@ -14,14 +15,38 @@ library(tidyverse)
 library(plotly)
 library(ggpubr)
 library(scales)
+library(skimr)
+library(GGally)
+library(corrr)
+library(corrplot)
+library(brglm2)
+library(ROSE)
+library(caret)
 ```
 
 ```{r, message=FALSE, warning=FALSE}
-dataHR <- read_csv(file = 'WA_Fn-UseC_-HR-Employee-Attrition.csv')
+dataHR <- read.csv(file = 'WA_Fn-UseC_-HR-Employee-Attrition.csv')
 ```
 
 ```{r}
-glimpse(dataHR)
+skim(dataHR)
+```
+  
+```{r}
+names(dataHR)[names(dataHR) == "ï..Age"] <- "Age"
+dataHR$Education <- as.factor(dataHR$Education)
+dataHR$EnvironmentSatisfaction <- as.factor(dataHR$EnvironmentSatisfaction)
+dataHR$JobInvolvement <- as.factor(dataHR$JobInvolvement)
+dataHR$JobLevel <- as.factor(dataHR$JobLevel)
+dataHR$JobSatisfaction <- as.factor(dataHR$JobSatisfaction)
+dataHR$StockOptionLevel <- as.factor(dataHR$StockOptionLevel)
+dataHR$PerformanceRating <- as.factor(dataHR$PerformanceRating)
+dataHR$RelationshipSatisfaction <- as.factor(dataHR$RelationshipSatisfaction)
+dataHR$WorkLifeBalance <- as.factor(dataHR$WorkLifeBalance)
+```
+
+```{r}
+dataHR <- dataHR %>% select(-EmployeeCount, -StandardHours, -Over18)
 ```
 
 ```{r}
@@ -33,25 +58,23 @@ sum(is.na(dataHR))
 ```{r}
 dist_attr <- dataHR %>%
                 group_by(Attrition) %>%
-                summarise(Jumlah = n())
-print(dist_attr)
+                summarise(Total = n()) %>%
+                print()
 ```
 
 ```{r}
 dist_attr %>% 
-  ggplot(aes(x=Attrition, y=Jumlah)) +
+  ggplot(aes(x=Attrition, y=Total)) +
   geom_col()
-```
+``` 
 
 ```{r}
 mean_age <- dataHR %>%
     group_by(Gender) %>%
     summarise(mean = mean(Age),
-              median = median(Age))
-
-print(mean_age)
+              median = median(Age)) %>%
+    print()
 ```
-
 
 ```{r}
 plot1 <- dataHR %>% 
@@ -79,35 +102,233 @@ ggarrange(plot1,
 ```{r}
 dist_attr_gender <- dataHR %>%
                 group_by(Attrition, Gender) %>%
-                summarise(Jumlah = n())
+                summarise(Total = n())
 print(dist_attr_gender)
 ```
 
 ```{r}
 dist_attr_gender %>%
-  ggplot(aes(x=Attrition, y=Jumlah, fill=Gender)) +
+  ggplot(aes(x=Attrition, y=Total, fill=Gender)) +
   geom_col(position="dodge")
 ```
 
 ```{r}
 pie_attr_male <- dist_attr_gender %>%
                     filter(Gender == "Male") %>%
-                    ggplot(aes(x="", y=Jumlah, fill=Attrition)) +
+                    ggplot(aes(x="", y=Total, fill=Attrition)) +
                     geom_bar(width=1, stat="identity") + 
                     coord_polar("y", start=0) +
                     ggtitle("Pie Chart \nAttrition pada Laki-laki") +
-                    geom_text(aes(y = Jumlah/2 + c(5, 10), 
-                              label = percent(Jumlah/sum(Jumlah))), size=5)
+                    geom_text(aes(y = Total/2 + c(5, 10), 
+                              label = percent(Total/sum(Total))), size=5)
 
 pie_attr_female <- dist_attr_gender %>%
                     filter(Gender == "Female") %>%
-                    ggplot(aes(x="", y=Jumlah, fill=Attrition)) +
+                    ggplot(aes(x="", y=Total, fill=Attrition)) +
                     geom_bar(width=1, stat="identity") + 
                     coord_polar("y", start=0) +
                     ggtitle("Pie Chart \nAttrition pada Perempuan") +
-                    geom_text(aes(y = Jumlah/2 + c(5, 10), 
-                              label = percent(Jumlah/sum(Jumlah))), size=5)
+                    geom_text(aes(y = Total/2 + c(5, 10), 
+                              label = percent(Total/sum(Total))), size=5)
 
 ggarrange(pie_attr_male, pie_attr_female)
+```
+
+## Logistic Regression
+
+Our variable of interest is the **Attrition** variable, it is a factor variable, I will convert it to binary variable that indicate whether the employee considered in the Attrition group (Attrition = 1) or the opposite (Attrition = 0).
+
+```{r}
+dataHR$Attrition <- as.factor(ifelse(dataHR$Attrition == "Yes", "1", "0"))
+```
+
+```{r}
+head(dataHR$Attrition)
+```
+
+```{r}
+RNGkind(sample.kind = "Rounding")
+set.seed(18)
+index <- sample(nrow(dataHR), nrow(dataHR)*0.8)
+data_train <- dataHR[index, ]
+data_test <- dataHR[-index,]
+```
+
+```{r}
+table(data_train$Attrition)
+```
+
+```{r}
+train_balanced <- ovun.sample(Attrition ~ ., data = data_train, method = "over",
+                              N = 996*2, seed = 1)$data
+table(train_balanced$Attrition)
+```
+
+```{r}
+model_log_full <- glm(Attrition ~ ., family = "binomial", data = train_balanced)
+#summary(model_log_full)
+```
+
+```{r}
+#glm(formula = Attrition ~ ., family = "binomial", data = data_train, method = "detect_separation", linear_program = "dual")
+```
+
+```{r}
+model_log_bw <- step(model_log_full, direction = "backward")
+summary(model_log_bw)
+```
+
+```{r}
+#car::vif(model_log_bw)
+```
+
+
+```{r}
+pred <- predict(model_log_bw, data_test, "response")
+```
+
+We want to prevent the Attrition, so we don´t want to predict the Attrition = 0 when it is actually "1".
+
+FP: a test result which incorrectly indicates that a particular condition or attribute is present.
+FN: a test result which incorrectly indicates that a particular condition or attribute is absent.
+
+When Attrition incorrectly predicted as 0.
+
+In our case, we prefer to focus on the **False Negatives** rate. Why? Because if so, we will miss our valuable employee.
+
+In the False Positive case, when the actual is good, we may take the concrete step, like questioning our own employee. But in the end, we will figure out that our employee have no problem at all. It not a big deal, or maybe even increase the good relation and good communication between employee and the employer itself.
+
+Sensitivity = TP/(TP + FN) 
+Specificity = TN/(TN + FP)
+Accuracy = (TN + TP)/(TN+TP+FN+FP)
+
+So, we want to **decrease** the FN. According to the formula, if we decrease the FN, we will increase the Sensitivity and the Accuracy score.
+
+```{r}
+pred_round <- as.factor(ifelse(pred >= 0.5, "1", "0"))
+confusionMatrix(pred_round, data_test$Attrition, positive = "1")
+```
+
+We will try to increase the accuracy and decrease the FN.
+
+```{r}
+data_test$pred <- pred
+
+ggplot(data_test, aes(pred, color = as.factor(Attrition) ) ) + 
+geom_density( size = 1 ) +
+ggtitle("Testing Set's Predicted Score") 
+```
+
+By seeing above graph, we can tuning our model by adjusting the threshold:
+- Lowering the threshold <0.5 will results in more Attrition == 1.
+- Increasing the threshold >0.5 will results in less Attrition == 1.
+
+Compute the most optimal cutoff values:
+```{r, fig.width=10}
+ROCRpred = prediction(pred, data_test$Attrition)
+
+# Performance function
+plot1 = performance(ROCRpred, "acc", "fnr")
+plot2 = performance(ROCRpred, "prec", "rec")
+
+par(mfrow = c(1, 2))
+plot(plot1, colorize=TRUE, print.cutoffs.at=seq(0,1,by=0.1), text.adj=c(-0.2,1.7))
+plot(plot2, colorize=TRUE, print.cutoffs.at=seq(0,1,by=0.1), text.adj=c(-0.2,1.7))
+```
+
+We want a threshold number which have the highest accuracy and the smallest false negative rate. By looking at the graph, the threshold should be around 0.3.
+
+```{r}
+pred_round <- as.factor(ifelse(pred >= 0.3, "1", "0"))
+confusionMatrix(pred_round, data_test$Attrition, positive = "1")
+```
+
+```{r}
+pred_round <- as.factor(ifelse(pred >= 0.4, "1", "0"))
+confusionMatrix(pred_round, data_test$Attrition, positive = "1")
+```
+
+
+# KNN Method
+
+```{r}
+dataHR_num <- dataHR %>%
+  select(Attrition, Age, DistanceFromHome, TotalWorkingYears, TrainingTimesLastYear, MonthlyIncome, YearsAtCompany, YearsInCurrentRole, YearsSinceLastPromotion, YearsWithCurrManager)
+```
+
+```{r}
+dataHR_scale <- dataHR_num %>% 
+  mutate_if(is.numeric, scale)
+```
+
+```{r}
+RNGkind(sample.kind = "Rounding")
+set.seed(18)
+index <- sample(nrow(dataHR_scale), nrow(dataHR_scale)*0.8)
+train_x <- dataHR_scale[index, -1] # prediktor data train
+test_x <- dataHR_scale[-index, -1] # prediktor data test
+train_y <- dataHR_scale[index, 1] # target data train
+test_y <- dataHR_scale[-index, 1] # target data test
+```
+
+```{r}
+library(class)
+pred_knn <- knn(train = train_x, test = test_x, cl = train_y, k = 20)
+```
+
+```{r}
+confusionMatrix(pred_knn, reference = test_y, positive = "No")
+```
+
+## Upsampling
+
+```{r}
+RNGkind(sample.kind = "Rounding")
+set.seed(18)
+index <- sample(nrow(dataHR_scale), nrow(dataHR_scale)*0.8)
+train <- dataHR_scale[index,] # prediktor data train
+test <- dataHR_scale[-index,] # target data test
+```
+
+```{r}
+table(train$Attrition)
+```
+
+```{r}
+train_balanced <- upSample(train[,-1], y = train$Attrition, yname = "Attrition")
+#train_balanced <- ovun.sample(Attrition ~ ., data = train, method = "under",
+                       #   N = 180*2, seed = 1)$data
+table(train_balanced$Attrition)
+```
+
+```{r}
+train_x <- train_balanced[, -10] # prediktor data train
+test_x <- test[, -1] # prediktor data test
+train_y <- train_balanced[, 10] # target data train
+test_y <- test[, 1] # target data test
+```
+
+```{r}
+library(class)
+pred_knn <- knn(train = train_x, test = test_x, cl = train_y, k = 20)
+```
+
+```{r}
+confusionMatrix(pred_knn, reference = test_y, positive = "No")
+```
+
+```{r}
+accuracy.df <- data.frame(k = seq(1, 70, 1), accuracy = rep(0, 70))
+accuracy.df # right now we have filled accurcay to be 0 for all values of K
+
+# compute knn for different k on validation by looping 
+for(i in 1:70) { # we will loop through K= 1 to 20
+  knn.pred <- knn(train = train_x, test=test_x, cl = train_y, k = i)
+  accuracy.df[i, 2] <- confusionMatrix(knn.pred, test_y)$byClass[2]
+}
+
+plot(accuracy.df) # plot accuracy for different values of K 
+lines(accuracy.df)
+
 ```
 
