@@ -1,9 +1,22 @@
 ---
-title: "LBB - Data Viz"
+title: "IBM HR Analytics ML Classification"
 author: "Yevonnael Andrew"
 date: "2/5/2020"
-output: html_document
+output:
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: tango
+    df_print: paged
 ---
+
+# Introduction
+
+This analysis will try to classify the Attrition of the given employee. The dataset is downloaded from Kaggle:
+https://www.kaggle.com/pavansubhasht/ibm-hr-analytics-attrition-dataset
+
+This analysis is part of Algoritma LBB Project in C1 class. In this project, I will create a **Logistic Regression model and a KNN model** with different parameters and tuning, and compare them to find which predict better for this dataset.
+
+If you have any suggestion or questions, [connect with me in LinkedIn](<https://www.linkedin.com/in/yevonnael-andrew-3351b9a7/>)
 
 ```{r setup, include=FALSE}
 rm(list = ls())
@@ -12,7 +25,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r, message=FALSE, warning=FALSE}
 library(tidyverse)
-library(plotly)
+library(ggthemr)
 library(ggpubr)
 library(scales)
 library(skimr)
@@ -21,16 +34,25 @@ library(corrr)
 library(corrplot)
 library(brglm2)
 library(ROSE)
+library(ROCR)
 library(caret)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+ggthemr("flat")
 ```
 
 ```{r, message=FALSE, warning=FALSE}
 dataHR <- read.csv(file = 'WA_Fn-UseC_-HR-Employee-Attrition.csv')
 ```
 
-```{r}
+Now we will get a glimpse over the data. Personally, I like the `skim()` function from skimr package over `glimpse()` or `summary()` because it give a more detailed information about the data, including the missing rate, complete rate, number of unique, column type and for the numeric type. `skim()` also return the five-number summary with a cute little histogram.
+
+```{r, fig.width=8}
 skim(dataHR)
 ```
+  
+Now we will do some data transformation, like renaming the typo in column name and converting some column type into the appropriate format. In this case, a column like Education is a factor, not an integer or numeric.  
   
 ```{r}
 names(dataHR)[names(dataHR) == "ï..Age"] <- "Age"
@@ -45,15 +67,21 @@ dataHR$RelationshipSatisfaction <- as.factor(dataHR$RelationshipSatisfaction)
 dataHR$WorkLifeBalance <- as.factor(dataHR$WorkLifeBalance)
 ```
 
+Some of the columns contain only a single value for the entire column. This kind of column is not informative for our modeling. So we will remove the columns.
+
 ```{r}
 dataHR <- dataHR %>% select(-EmployeeCount, -StandardHours, -Over18)
 ```
+
+We will make sure once again that we don't have NA values in our dataset.
 
 ```{r}
 sum(is.na(dataHR))
 ```
 
-**Distribusi dari Attrition**
+# Exploratory Data Analysis
+
+Our target variable is in the Attrition column. Before doing any analysis or modeling, we want to know the distribution of our Attrition variable. If it is imbalanced, further handling will be needed.
 
 ```{r}
 dist_attr <- dataHR %>%
@@ -65,8 +93,11 @@ dist_attr <- dataHR %>%
 ```{r}
 dist_attr %>% 
   ggplot(aes(x=Attrition, y=Total)) +
-  geom_col()
+  geom_col() +
+  ggtitle("Total Numbers of Attrition")
 ``` 
+
+We also want to see the distribution of our employee's age divided by their gender.
 
 ```{r}
 mean_age <- dataHR %>%
@@ -80,19 +111,22 @@ mean_age <- dataHR %>%
 plot1 <- dataHR %>% 
     ggplot(aes(x=Age)) + 
     geom_density(fill = "green", alpha = 0.5) +
-    geom_vline(aes(xintercept = mean(Age)))
+    geom_vline(aes(xintercept = mean(Age))) +
+    labs(title = "Age Distribution")
 
 plot2 <- dataHR %>%
     filter(Gender == "Male") %>%
     ggplot(aes(x=Age)) + 
     geom_density(fill = "blue", alpha = 0.5) +
-    geom_vline(aes(xintercept = mean(Age)))
+    geom_vline(aes(xintercept = mean(Age))) +
+    labs(title = "Male Age Distribution")
 
 plot3 <- dataHR %>%
     filter(Gender == "Female") %>%
     ggplot(aes(x=Age)) + 
     geom_density(fill = "red", alpha = 0.5) +
-    geom_vline(aes(xintercept = mean(Age)))
+    geom_vline(aes(xintercept = mean(Age))) +
+    labs(title = "Female Age Distribution")
 
 ggarrange(plot1,
           ggarrange(plot2, plot3),
@@ -118,7 +152,7 @@ pie_attr_male <- dist_attr_gender %>%
                     ggplot(aes(x="", y=Total, fill=Attrition)) +
                     geom_bar(width=1, stat="identity") + 
                     coord_polar("y", start=0) +
-                    ggtitle("Pie Chart \nAttrition pada Laki-laki") +
+                    ggtitle("Pie Chart \nAttrition Male") +
                     geom_text(aes(y = Total/2 + c(5, 10), 
                               label = percent(Total/sum(Total))), size=5)
 
@@ -127,24 +161,26 @@ pie_attr_female <- dist_attr_gender %>%
                     ggplot(aes(x="", y=Total, fill=Attrition)) +
                     geom_bar(width=1, stat="identity") + 
                     coord_polar("y", start=0) +
-                    ggtitle("Pie Chart \nAttrition pada Perempuan") +
+                    ggtitle("Pie Chart \nAttrition Female") +
                     geom_text(aes(y = Total/2 + c(5, 10), 
                               label = percent(Total/sum(Total))), size=5)
 
 ggarrange(pie_attr_male, pie_attr_female)
 ```
 
+# Modelling
+
 ## Logistic Regression
 
-Our variable of interest is the **Attrition** variable, it is a factor variable, I will convert it to binary variable that indicate whether the employee considered in the Attrition group (Attrition = 1) or the opposite (Attrition = 0).
+Our variable of interest is the **Attrition** variable that indicates whether the employee considered in the Attrition group (Attrition = Yes) or the opposite (Attrition = No).
 
-```{r}
-dataHR$Attrition <- as.factor(ifelse(dataHR$Attrition == "Yes", "1", "0"))
-```
+Cambridge Dictionary defined Attrition as *a reduction in the number of people who work for an organization that is achieved by not replacing those people who leave.* 
 
 ```{r}
 head(dataHR$Attrition)
 ```
+
+We will divide our dataset by 80% into train data and 20% into test data. We will using `set.seed()` function to make sure that R produce the same random number to make this report is reproducible.
 
 ```{r}
 RNGkind(sample.kind = "Rounding")
@@ -154,9 +190,15 @@ data_train <- dataHR[index, ]
 data_test <- dataHR[-index,]
 ```
 
+Before doing any analysis, we must make sure that we have a balanced training data. An imbalanced training data most likely to perform more inferior than the balanced data. So, we will try to make it balanced by using an upsampling technique with `ovun.sample()` function from ROSE package.
+
+We will see our train data distribution. Now we see quite a large skew in our target variable.
+
 ```{r}
 table(data_train$Attrition)
 ```
+
+Before doing modeling, we need to make our data balanced. The imbalanced data could perform poorly because the algorithm cannot learn good enough from the minority class. We will do an upsampling technique to treat the imbalance.
 
 ```{r}
 train_balanced <- ovun.sample(Attrition ~ ., data = data_train, method = "over",
@@ -164,52 +206,92 @@ train_balanced <- ovun.sample(Attrition ~ ., data = data_train, method = "over",
 table(train_balanced$Attrition)
 ```
 
+After the data is balanced, we will make out first Logistic Regression model by using all the predictors into the formula.
+
 ```{r}
 model_log_full <- glm(Attrition ~ ., family = "binomial", data = train_balanced)
-#summary(model_log_full)
+summary(model_log_full)
 ```
 
-```{r}
-#glm(formula = Attrition ~ ., family = "binomial", data = data_train, method = "detect_separation", linear_program = "dual")
-```
+We will detect if perfect separation exist in our data.
+https://cran.r-project.org/web/packages/brglm2/vignettes/separation.html
 
 ```{r}
-model_log_bw <- step(model_log_full, direction = "backward")
+glm(formula = Attrition ~ ., family = "binomial", data = data_train, method = "detect_separation", linear_program = "dual")
+```
+
+**FALSE** means there is no perfect separation that exists in our model.
+
+Next, we will be doing a feature engineering by applying the `step()` function into our full model. We will be using the backward option, which the function will iterate over the model, starts with all predictor (full model as we input it) and remove the least contributive predictors.
+
+```{r}
+model_log_bw <- step(model_log_full, direction = "backward", trace = FALSE)
 summary(model_log_bw)
 ```
 
+When modeling a model, there is a parsimonious model, which is a model that has a desirable and useful level of explanation with as few predictors as possible. That's why when we do a backward step into our full model, we will obtain the least used predictors in the second model with the comparable good result.
+
+Now, we will check if multicollinearity exists in our model using `vif()` function from car package. According to Zuur et al. (2010), a high value of VIF indicating multicollinearity exists and suggest to drop the highest value of VIF.
+
 ```{r}
-#car::vif(model_log_bw)
+car::vif(model_log_bw)
 ```
 
+Recreating a formula with the highest VIF is dropped.
+
+```{r}
+model_log_bw <- glm(formula = Attrition ~ Age + BusinessTravel + DailyRate + 
+    DistanceFromHome + EducationField + EmployeeNumber + 
+    EnvironmentSatisfaction + Gender + JobInvolvement + JobLevel + 
+    JobRole + JobSatisfaction + MaritalStatus + MonthlyIncome + 
+    NumCompaniesWorked + OverTime + PercentSalaryHike + RelationshipSatisfaction + 
+    StockOptionLevel + TotalWorkingYears + TrainingTimesLastYear + 
+    WorkLifeBalance + YearsAtCompany + YearsInCurrentRole + YearsSinceLastPromotion + 
+    YearsWithCurrManager, family = "binomial", data = train_balanced)
+```
+
+Recalculate the VIF value.
+
+```{r}
+car::vif(model_log_bw)
+```
+
+After the highest value of VIF dropped, our model is ready to be used for predicting the test dataset.
 
 ```{r}
 pred <- predict(model_log_bw, data_test, "response")
 ```
 
-We want to prevent the Attrition, so we don´t want to predict the Attrition = 0 when it is actually "1".
+Let say the company objective is want to prevent the Attrition, so we ** don't want to predict the Attrition = No when it is actually Yes.**
 
-FP: a test result which incorrectly indicates that a particular condition or attribute is present.
-FN: a test result which incorrectly indicates that a particular condition or attribute is absent.
+If the real value of Attrition = Yes while the predicted value is No, it will make us **failed to take a preventive action that needed to take to prevent the Attrition happens.**
 
-When Attrition incorrectly predicted as 0.
+If the real value of Attrition = No while the predicted value is Yes, we may take an unnecessary step to prevent something that won't happen. But in my opinion, **this action is not fatal and maybe it better, because with this 'mistaken' step is taken, we may build a stronger relationship and stronger understanding with our employees. Not a bad choice, actually.**
 
-In our case, we prefer to focus on the **False Negatives** rate. Why? Because if so, we will miss our valuable employee.
+- FP: a test result that incorrectly indicates that a particular condition or attribute is present.
 
-In the False Positive case, when the actual is good, we may take the concrete step, like questioning our own employee. But in the end, we will figure out that our employee have no problem at all. It not a big deal, or maybe even increase the good relation and good communication between employee and the employer itself.
+- FN: a test result that incorrectly indicates that a particular condition or attribute is absent.
 
-Sensitivity = TP/(TP + FN) 
-Specificity = TN/(TN + FP)
-Accuracy = (TN + TP)/(TN+TP+FN+FP)
+So, in our case, we prefer to focus on lowering the **False Negatives** rate. Why? Because if so, we will miss our valuable employee.
 
-So, we want to **decrease** the FN. According to the formula, if we decrease the FN, we will increase the Sensitivity and the Accuracy score.
+In the False Positive case, when the actual is good, we may take the concrete step, like questioning our employee. But in the end, we will figure out that our employee has no problem at all. 
+
+- Sensitivity = TP/(TP + FN) 
+
+- Specificity = TN/(TN + FP)
+
+- Accuracy = (TN + TP)/(TN+TP+FN+FP)
+
+So, we want to **decrease** the FN. According to the formula, if we decrease the FN, we will increase the Sensitivity and Accuracy score.
+
+Now we will compare our prediction with the real value in the test dataset. The threshold is set into 0.5.
 
 ```{r}
-pred_round <- as.factor(ifelse(pred >= 0.5, "1", "0"))
-confusionMatrix(pred_round, data_test$Attrition, positive = "1")
+pred_round <- as.factor(ifelse(pred >= 0.5, "Yes", "No"))
+confusionMatrix(pred_round, data_test$Attrition, positive = "Yes")
 ```
 
-We will try to increase the accuracy and decrease the FN.
+We will try to increase the accuracy and decrease the FN. In the Logistic Regression model, it can happen by adjusting the threshold of the prediction. But the question, what is the optimal number of the threshold? We will create a graph that will help us visualize the distribution of the prediction.
 
 ```{r}
 data_test$pred <- pred
@@ -219,11 +301,14 @@ geom_density( size = 1 ) +
 ggtitle("Testing Set's Predicted Score") 
 ```
 
-By seeing above graph, we can tuning our model by adjusting the threshold:
-- Lowering the threshold <0.5 will results in more Attrition == 1.
-- Increasing the threshold >0.5 will results in less Attrition == 1.
+By seeing the above graph, we can tune our model by adjusting the threshold:
 
-Compute the most optimal cutoff values:
+- The threshold value of <0.5 will results in more Attrition == Yes
+
+- The threshold value of >0.5 will results in less Attrition == Yes
+
+Besides the graph, we can mathematically compute the most optimal cutoff values.
+
 ```{r, fig.width=10}
 ROCRpred = prediction(pred, data_test$Attrition)
 
@@ -236,99 +321,236 @@ plot(plot1, colorize=TRUE, print.cutoffs.at=seq(0,1,by=0.1), text.adj=c(-0.2,1.7
 plot(plot2, colorize=TRUE, print.cutoffs.at=seq(0,1,by=0.1), text.adj=c(-0.2,1.7))
 ```
 
-We want a threshold number which have the highest accuracy and the smallest false negative rate. By looking at the graph, the threshold should be around 0.3.
+We want a threshold number which has the highest accuracy and the lowest false-negative rate. By looking at the graph, the threshold should be around 0.3 or 0.4. Now we will try both values to see the results.
 
 ```{r}
-pred_round <- as.factor(ifelse(pred >= 0.3, "1", "0"))
-confusionMatrix(pred_round, data_test$Attrition, positive = "1")
+pred_round <- as.factor(ifelse(pred >= 0.3, "Yes", "No"))
+confusionMatrix(pred_round, data_test$Attrition, positive = "Yes")
 ```
 
 ```{r}
-pred_round <- as.factor(ifelse(pred >= 0.4, "1", "0"))
-confusionMatrix(pred_round, data_test$Attrition, positive = "1")
+pred_round <- as.factor(ifelse(pred >= 0.4, "Yes", "No"))
+confusionMatrix(pred_round, data_test$Attrition, positive = "Yes")
 ```
 
+The threshold value of 0.3 and 0.4, successfully decreasing the False Negative count of the prediction, thus increasing the Sensitivity of the data. It is also increasing the number of True Positive count of the prediction. Good sign! 
 
-# KNN Method
+The drawback of adjusting the threshold in our prediction is our model failed to predict the True Negative count. But if we think the False Positive is not a big deal, then it should not be a problem.
 
-```{r}
+## KNN with caret()
+
+KNN or k-nearest neighbors is a non-parametric method that can be used for classification. We will try to predict using this method and compare the performance with the Logistic Regression.
+
+KNN is only worked for predictor with numerical values so that we will select the numerical columns only.
+
+```{r, echo=FALSE}
 dataHR_num <- dataHR %>%
   select(Attrition, Age, DistanceFromHome, TotalWorkingYears, TrainingTimesLastYear, MonthlyIncome, YearsAtCompany, YearsInCurrentRole, YearsSinceLastPromotion, YearsWithCurrManager)
+
+dataHR_num$Attrition <- relevel(dataHR_num$Attrition, "Yes")
 ```
 
-```{r}
-dataHR_scale <- dataHR_num %>% 
-  mutate_if(is.numeric, scale)
-```
-
-```{r}
-RNGkind(sample.kind = "Rounding")
-set.seed(18)
-index <- sample(nrow(dataHR_scale), nrow(dataHR_scale)*0.8)
-train_x <- dataHR_scale[index, -1] # prediktor data train
-test_x <- dataHR_scale[-index, -1] # prediktor data test
-train_y <- dataHR_scale[index, 1] # target data train
-test_y <- dataHR_scale[-index, 1] # target data test
-```
-
-```{r}
-library(class)
-pred_knn <- knn(train = train_x, test = test_x, cl = train_y, k = 20)
-```
-
-```{r}
-confusionMatrix(pred_knn, reference = test_y, positive = "No")
-```
-
-## Upsampling
+First, we will divide our dataset into 80% train data and 20% test data. We will using `set.seed()` function to make sure that R produce the same random number to make this report is reproducible.
 
 ```{r}
 RNGkind(sample.kind = "Rounding")
 set.seed(18)
-index <- sample(nrow(dataHR_scale), nrow(dataHR_scale)*0.8)
-train <- dataHR_scale[index,] # prediktor data train
-test <- dataHR_scale[-index,] # target data test
+ind <- dataHR_num$Attrition %>% 
+  createDataPartition(p = 0.8, list = FALSE)
+train_caret  <- dataHR_num[ind, ]
+test_caret <- dataHR_num[-ind, ]
+```
+
+I will be using caret package to predict with KNN. After data split into a train set and a test set, I am using k-Fold Cross-Validation parameter in the `train()` function. The data **pre-processing of Centering and Scaling** will be done in the `trainControl()` function.
+
+The k-Fold Cross-Validation parameter will be set all to 10. **Data imbalanced will be handled** using sampling method in `trainControl()` function, I will try all the options available to compare how the different sampling method will perform.
+
+The **k values of KNN method will be set with the tuneGrid in `train()` function**. The function will take the best k value automatically to be used in the test set, which has the best Sensitivity, from metric options.
+
+```{r}
+sqrt(nrow(dataHR))
+```
+
+The rule of thumb of k value in KNN is the square root of the number of rows in the dataset.
+
+I will iterate **from 1 to 50 for the k values of KNN** in the `tuneGrid`. The function will take the best k value that produces the highest value of Sensitivity. The Sensitivity parameter is chosen according to our company objective.
+
+The imbalanced data will be handled using several sampling methods: **Upsampling, Downsampling, SMOTE, ROSE.**
+
+```{r}
+model_imbalanced <- train(
+  Attrition ~., data = train_caret, method = "knn",
+  trControl = trainControl(method = "cv",
+                           number = 10,
+                           classProbs = TRUE,
+                           summaryFunction=twoClassSummary),
+  preProcess = c("center","scale"),
+  metric = "Sens",
+  tuneGrid = expand.grid(k = 1:50)
+  )
+
+model_upsampling <- train(
+  Attrition ~., data = train_caret, method = "knn",
+  trControl = trainControl(method = "cv",
+                           number = 10,
+                           sampling = "up",
+                           classProbs = TRUE,
+                           summaryFunction=twoClassSummary),
+  preProcess = c("center","scale"),
+  metric = "Sens",
+  tuneGrid = expand.grid(k = 1:50)
+  )
+
+model_downsampling <- train(
+  Attrition ~., data = train_caret, method = "knn",
+  trControl = trainControl(method = "cv",
+                           number = 10,
+                           sampling = "down",
+                           classProbs = TRUE,
+                           summaryFunction=twoClassSummary),
+  preProcess = c("center","scale"),
+  metric = "Sens",
+  tuneGrid = expand.grid(k = 1:50)
+  )
+
+model_smote<- train(
+  Attrition ~., data = train_caret, method = "knn",
+  trControl = trainControl(method = "cv",
+                           number = 10,
+                           sampling = "smote",
+                           classProbs = TRUE,
+                           summaryFunction=twoClassSummary),
+  preProcess = c("center","scale"),
+  metric = "Sens",
+  tuneGrid = expand.grid(k = 1:50)
+  )
+
+model_rose<- train(
+  Attrition ~., data = train_caret, method = "knn",
+  trControl = trainControl(method = "cv",
+                           number = 10,
+                           sampling = "rose",
+                           classProbs = TRUE,
+                           summaryFunction=twoClassSummary),
+  preProcess = c("center","scale"),
+  metric = "Sens",
+  tuneGrid = expand.grid(k = 1:50)
+  )
+```
+
+Now, we will make a prediction with our created models into the test dataset, and we will save the results into appropriate objects.
+
+```{r}
+pred_imbalanced <- model_imbalanced %>% 
+  predict(test_caret)
+pred_upsampling <- model_upsampling %>% 
+  predict(test_caret)
+pred_downsampling <- model_downsampling %>% 
+  predict(test_caret)
+pred_smote <- model_smote %>% 
+  predict(test_caret)
+pred_rose <- model_rose %>% 
+  predict(test_caret)
 ```
 
 ```{r}
-table(train$Attrition)
+confusionMatrix(pred_imbalanced, test_caret$Attrition)
 ```
 
 ```{r}
-train_balanced <- upSample(train[,-1], y = train$Attrition, yname = "Attrition")
-#train_balanced <- ovun.sample(Attrition ~ ., data = train, method = "under",
-                       #   N = 180*2, seed = 1)$data
-table(train_balanced$Attrition)
+confusionMatrix(pred_upsampling, test_caret$Attrition, positive = "Yes")
 ```
 
 ```{r}
-train_x <- train_balanced[, -10] # prediktor data train
-test_x <- test[, -1] # prediktor data test
-train_y <- train_balanced[, 10] # target data train
-test_y <- test[, 1] # target data test
+confusionMatrix(pred_downsampling, test_caret$Attrition, positive = "Yes")
 ```
 
 ```{r}
-library(class)
-pred_knn <- knn(train = train_x, test = test_x, cl = train_y, k = 20)
+confusionMatrix(pred_smote, test_caret$Attrition, positive = "Yes")
 ```
 
 ```{r}
-confusionMatrix(pred_knn, reference = test_y, positive = "No")
+confusionMatrix(pred_rose, test_caret$Attrition, positive = "Yes")
+```
+
+We will calculate the performance differences statistically.
+
+```{r}
+resamps <- resamples(list(Imbalanced = model_imbalanced,
+                          Upsampling = model_upsampling,
+                          Downsampling = model_downsampling,
+                          SMOTE = model_smote,
+                          ROSE = model_rose))
 ```
 
 ```{r}
-accuracy.df <- data.frame(k = seq(1, 70, 1), accuracy = rep(0, 70))
-accuracy.df # right now we have filled accurcay to be 0 for all values of K
-
-# compute knn for different k on validation by looping 
-for(i in 1:70) { # we will loop through K= 1 to 20
-  knn.pred <- knn(train = train_x, test=test_x, cl = train_y, k = i)
-  accuracy.df[i, 2] <- confusionMatrix(knn.pred, test_y)$byClass[2]
-}
-
-plot(accuracy.df) # plot accuracy for different values of K 
-lines(accuracy.df)
-
+resamps$values %>%
+  select(Resample, 
+         Imbalanced = `Imbalanced~Sens`, 
+         Upsampling = `Upsampling~Sens`, 
+         Downsampling = `Downsampling~Sens`, 
+         SMOTE = `SMOTE~Sens`, 
+         ROSE = `ROSE~Sens`)
 ```
 
+```{r, fig.width=10}
+bwplot(resamps, layout = c(3, 1))
+```
+
+From the table and the chart above, we can conclude that, in general, Upsampling produced the highest Sensitivity value of our model. It doesn't mean that Upsampling is always the best for all models and all situations. But in our case, because we focus on the Sensitivity value, the Upsampling method gives us the best result.
+
+# Conclusion
+
+Our model summary:
+
+1. Logistic Regression with default threshold (> 0.5)
+
+- Accuracy: 0.7721
+
+- Sensitivity : 0.7368
+
+2. Logistic Regression with threshold > 0.3
+
+- Accuracy: 0.7075
+
+- Sensitivity: 0.8772
+
+3. Logistic Regression with threshold > 0.4
+
+- Accuracy: 0.7381
+
+- Sensitivity: 0.8070
+
+4. KNN with Imbalanced Data
+
+- Accuracy: 0.7611
+
+- Sensitivity: 0.31915
+
+5. KNN with Unsampling
+
+- Accuracy: 0.5904
+
+- Sensitivity: 0.61702
+
+6. KNN with Downsampling
+
+- Accuracy: 0.5836
+
+- Sensitivity: 0.55319
+
+7. KNN with SMOTE
+
+- Accuracy: 0.6382
+
+- Sensitivity: 0.4894
+
+8. KNN with ROSE
+
+- Accuracy: 0.6553
+
+- Sensitivity: 0.5745
+
+Our prediction with the KNN method, all produces both Accuracy and Sensitivity score lower than the Logistic Regression Model. **Maybe it is because we only use the numerical value type of predictors in the KNN. We may lose some valuable information that may contain in the categorical predictors.**
+
+With both numerical and categorical types of columns included in the Logistic Regression model, it produces a better value than the KNN. If our objective is decreasing the False Negative as defined by the business objective, we will choose *Logistic Regression with threshold > 0.3* for our model.
